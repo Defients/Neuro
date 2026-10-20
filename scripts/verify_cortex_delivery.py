@@ -11,7 +11,10 @@ async def main():
         health=(await api.get('/api/health')).json()
         assert health['version']=='0.1.1-lifecycle', 'Restart the stale backend first'
         r=await api.post('/api/diagnostics',json={});r.raise_for_status()
-        r=await api.post('/api/source',json={'kind':'cortex','headset':'MN8-29DB','authorized':True,'activate':False,'debit_one':False});r.raise_for_status()
+        d=(await api.get('/api/diagnostics')).json()
+        headset=next((h['id'] for h in d['headsets'] if h.get('status')=='connected'),None)
+        assert headset,'No connected headset found in diagnostics'
+        r=await api.post('/api/source',json={'kind':'cortex','headset':headset,'authorized':True,'activate':False,'debit_one':False});r.raise_for_status()
         names=['dev','eq','met','mot','pow']
         for _ in range(30):
             d=(await api.get('/api/diagnostics')).json()

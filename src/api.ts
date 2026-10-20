@@ -9,12 +9,21 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
           body: JSON.stringify(body),
         },
   );
-  const data = await r.json();
-  if (!r.ok)
+  const text = await r.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  if (!r.ok || data === null)
     throw new Error(
-      typeof data.detail === "object"
+      data && typeof data.detail === "object" && data.detail !== null
         ? `${data.detail.code}: ${data.detail.explanation} ${data.detail.action}`
-        : data.detail || "Request failed",
+        : data?.detail ||
+            `Request to /api${path} failed (${r.status}, ${
+              text ? "non-JSON" : "empty"
+            } response). Is the backend running?`,
     );
   return data;
 }

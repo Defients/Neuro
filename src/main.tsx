@@ -37,6 +37,7 @@ import {
   Headphones,
   AlertTriangle,
   RotateCcw,
+  Eraser,
 } from "lucide-react";
 import type {
   State,
@@ -99,6 +100,27 @@ const duration = (n: number) =>
     .padStart(2, "0")}`;
 const number = (n: number | null | undefined, digits = 1) =>
   n == null ? "—" : n.toFixed(digits);
+const METRIC_LABELS: Record<string, string> = {
+  attention: "Attention",
+  cognitiveStress: "Cognitive strain",
+  str: "Stress",
+  eng: "Engagement",
+  rel: "Relaxation",
+  exc: "Excitement",
+  lex: "Long-term excitement",
+  int: "Interest",
+};
+const METRIC_ORDER = Object.keys(METRIC_LABELS);
+const metricKeys = (metrics: State["metrics"]) =>
+  metrics
+    ? Object.keys(metrics)
+        .filter((k) => !["stale", "timestamp", "origin"].includes(k))
+        .sort(
+          (a, b) =>
+            (METRIC_ORDER.indexOf(a) + 1 || 99) -
+            (METRIC_ORDER.indexOf(b) + 1 || 99),
+        )
+    : [];
 function App() {
   const [page, setPage] = useState("Live Monitor"),
     [view, setView] = useState("Overview"),
@@ -329,7 +351,7 @@ function App() {
           <div className="device-card">
             <div>
               <Headphones size={17} />
-              <span>EMOTIV MN8</span>
+              <span>EMOTIV Cortex</span>
             </div>
             <b>
               {state.source?.kind === "cortex" && state.arriving
@@ -1030,26 +1052,29 @@ function App() {
                     title="Cognitive estimates"
                     eyebrow="LAYER B · CORTEX PROPRIETARY"
                   >
-                    <div className="metric-tile">
-                      <span>Attention</span>
-                      <b>
-                        {online && state.metrics?.attention != null
-                          ? number(state.metrics.attention, 2)
-                          : "Unavailable"}
-                      </b>
-                    </div>
-                    <div className="metric-tile">
-                      <span>Cognitive strain</span>
-                      <b>
-                        {online && state.metrics?.cognitiveStress != null
-                          ? number(state.metrics.cognitiveStress, 2)
-                          : "Unavailable"}
-                      </b>
-                    </div>
+                    {metricKeys(state.metrics).length ? (
+                      metricKeys(state.metrics).map((k) => (
+                        <div className="metric-tile" key={k}>
+                          <span>{METRIC_LABELS[k] || k}</span>
+                          <b>
+                            {online && state.metrics?.[k] != null
+                              ? number(state.metrics[k] as number, 2)
+                              : "Unavailable"}
+                          </b>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="metric-tile">
+                        <span>Cortex estimates</span>
+                        <b>Unavailable</b>
+                      </div>
+                    )}
                     <p className="footnote">
-                      MN8 attention and cognitiveStress only. Active flags are
-                      required; estimates older than 15 seconds are suppressed.
-                      Demo EEG does not generate Cortex metrics.
+                      Metrics are whatever the connected headset publishes;
+                      Insight provides attention, stress, engagement,
+                      relaxation, excitement and interest. Published active
+                      flags are required; estimates older than 15 seconds are
+                      suppressed. Demo EEG does not generate Cortex metrics.
                     </p>
                   </Panel>
                   <Panel
@@ -1059,15 +1084,23 @@ function App() {
                     <div className="interpretation">
                       <Brain size={26} />
                       <h3>
-                        {online &&
-                        state.metrics?.attention != null &&
-                        state.metrics.cognitiveStress != null
-                          ? `${state.metrics.attention >= 0.5 ? "Focused" : "Lower focus"} / ${state.metrics.cognitiveStress >= 0.5 ? "higher" : "lower"} strain`
-                          : "Estimate unavailable"}
+                        {(() => {
+                          const strain =
+                            (state.metrics?.cognitiveStress ??
+                              state.metrics?.str) as number | null | undefined;
+                          const attention = state.metrics?.attention as
+                            | number
+                            | null
+                            | undefined;
+                          return online && attention != null && strain != null
+                            ? `${attention >= 0.5 ? "Focused" : "Lower focus"} / ${strain >= 0.5 ? "higher" : "lower"} strain`
+                            : "Estimate unavailable";
+                        })()}
                       </h3>
                       <p>
-                        Transparent quadrant mapping at 0.5. Descriptive only;
-                        no validated mood model exists.
+                        Transparent quadrant mapping at 0.5 using attention and
+                        the headset's stress estimate. Descriptive only; no
+                        validated mood model exists.
                       </p>
                     </div>
                   </Panel>
@@ -1554,8 +1587,13 @@ function App() {
                       [
                         "EEG samples received",
                         actualLive && state.source?.kind === "cortex",
+                        (
+                          (diag?.license?.scopes as string[] | undefined) || []
+                        ).includes("eeg")
+                          ? "UNVERIFIED"
+                          : "NO EEG SCOPE IN LICENSE",
                       ],
-                    ].map(([text, done], i) => (
+                    ].map(([text, done, pending], i) => (
                       <div key={i}>
                         <span className={"step-number " + (done ? "done" : "")}>
                           {done ? (
@@ -1565,7 +1603,7 @@ function App() {
                           )}
                         </span>
                         <b>{text}</b>
-                        <small>{done ? "VERIFIED" : "UNVERIFIED"}</small>
+                        <small>{done ? "VERIFIED" : pending || "UNVERIFIED"}</small>
                       </div>
                     ))}
                   </div>
@@ -1633,9 +1671,10 @@ function App() {
                       to frontend JavaScript.
                     </p>
                     <p className="body-copy">
-                      For MN8, check whether “Enable EEG for Professional
-                      devices” was unnecessarily enabled in the developer app
-                      registration.
+                      Check whether “Enable EEG for Professional devices”
+                      matches your headset in the developer app registration —
+                      required for EPOC-family devices, unnecessary for consumer
+                      headsets (MN8, Insight).
                     </p>
                     <label className="checkbox">
                       <input
@@ -1704,8 +1743,8 @@ function App() {
                             checked={activate}
                             onChange={(e) => setActivate(e.target.checked)}
                           />
-                          Activate an EEG session (requires verified EEG scope
-                          and quota)
+                          Activate an EEG session (license and quota
+                          permitting; Cortex decides)
                         </label>
                         <label className="checkbox">
                           <input
@@ -1717,6 +1756,18 @@ function App() {
                           Explicitly allocate one license session; no automatic
                           retries
                         </label>
+                        {diag.authorized &&
+                          !(
+                            (diag.license?.scopes as string[] | undefined) || []
+                          ).includes("eeg") && (
+                            <p className="footnote">
+                              License lists no EEG scope — activation will still
+                              be attempted at your request; EMOTIV documents
+                              full stream access for consumer headsets. If
+                              Cortex rejects it, an aux-only session opens and
+                              the exact error appears below.
+                            </p>
+                          )}
                         <button
                           className="button primary"
                           disabled={!!busy || !authConsent || !diag.authorized}
@@ -1749,7 +1800,8 @@ function App() {
                       <b>No verified headset discovery yet</b>
                       <p>
                         Open Launcher, sign in, and run diagnostics. A
-                        discovered MN8 still requires an authorized connection.
+                        discovered headset still requires an authorized
+                        connection.
                       </p>
                     </div>
                   )}
@@ -1826,15 +1878,33 @@ function App() {
                   </label>
                   <p className="footnote padded">
                     One source at a time prevents concurrent duplicates. Check
-                    publisher identity; an LSL stream may describe the same MN8
-                    as Cortex.
+                    publisher identity; an LSL stream may describe the same
+                    headset as Cortex.
                   </p>
                 </Panel>
               </div>
               <Panel
                 title="Diagnostic console"
                 eyebrow="TIMESTAMPED · SANITIZED"
-                action={<Badge>{diag?.events.length || 0} EVENTS</Badge>}
+                action={
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <Badge>{diag?.events.length || 0} EVENTS</Badge>
+                    <button
+                      className="icon-button"
+                      aria-label="Clear diagnostic console"
+                      title="Clear diagnostic console"
+                      disabled={!diag?.events.length || !!busy}
+                      onClick={() =>
+                        action("clearing console", async () => {
+                          await api("/diagnostics/clear", {});
+                          setDiag(await api("/diagnostics"));
+                        })
+                      }
+                    >
+                      <Eraser size={14} />
+                    </button>
+                  </div>
+                }
               >
                 <div className="console">
                   {diag?.events.length ? (

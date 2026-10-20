@@ -163,7 +163,8 @@ class Cortex:
                 error = CortexError(e.get('code'), e.get('message', 'Unknown Cortex error'), method)
                 self.event(method, 'error', error.report())
                 raise error
-            self.event(method, 'success')
+            if method != 'querySessions':
+                self.event(method, 'success')
             return result.get('result')
         finally:
             self.pending.pop(seq, None)
@@ -219,7 +220,7 @@ class Cortex:
                 await self.call('controlDevice', {'command': 'refresh'})
                 await asyncio.sleep(2)
                 self.state['headsets'] = await self.call('queryHeadsets')
-                self.state['next_action'] = 'Headset already connected. Open a permitted-stream session; raw EEG requires EEG scope.' if any(h.get('status') == 'connected' for h in self.state['headsets']) else 'Select the MN8 and explicitly connect. Discovery alone is not a connection.'
+                self.state['next_action'] = 'Headset already connected. Open a permitted-stream session; raw EEG requires EEG scope.' if any(h.get('status') == 'connected' for h in self.state['headsets']) else 'Select a discovered headset and explicitly connect. Discovery alone is not a connection.'
             except CortexError as e:
                 self.state['next_action'] = e.report()['action']
                 self.state['blocker'] = e.report()
@@ -256,8 +257,6 @@ class Cortex:
                 self.event('connect', 'timeout', 'No queryHeadsets confirmation of connected status.')
                 raise ValueError('Headset connection was not confirmed. Review warnings and entitlement; no session was created.')
             self.event('connect', 'verified', {'headset': headset_id, 'status': 'connected'})
-            if activate and 'eeg' not in ((self.state.get('license') or {}).get('scopes') or []):
-                raise ValueError('Verified license has no EEG scope. No quota debit or activation attempted.')
             if debit_one:
                 if not activate:
                     raise ValueError('Quota allocation requires an explicit active EEG session request.')
@@ -270,8 +269,19 @@ class Cortex:
                 remember(self.token)
             scopes = (self.state.get('license') or {}).get('scopes') or []
             if activate and 'eeg' not in scopes:
-                raise ValueError('Verified license has no EEG scope. No session activation attempted.')
-            session = await self.call('createSession', {'cortexToken': self.token, 'headset': headset_id, 'status': 'active' if activate else 'open'})
+                self.event('eeg_scope', 'absent_from_license', 'License omits eeg scope; per EMOTIV docs consumer headsets may still activate. Cortex response is authoritative.')
+            requested_active = bool(activate)
+            try:
+                session = await self.call('createSession', {'cortexToken': self.token, 'headset': headset_id, 'status': 'active' if activate else 'open'})
+            except CortexError as e:
+                if not activate:
+                    raise
+                self.event('eeg_activation', 'rejected', e.report())
+                self.state['eeg_activation'] = {'requested': True, 'accepted': False, 'error': e.report()}
+                session = await self.call('createSession', {'cortexToken': self.token, 'headset': headset_id, 'status': 'open'})
+                activate = False
+            if requested_active and activate:
+                self.state['eeg_activation'] = {'requested': True, 'accepted': True}
             self.session = session['id']
             self.telemetry = {}
             self.notifications_enabled = True
@@ -282,13 +292,18 @@ class Cortex:
             self.state['subscribe_response'] = redact(result)
             self.event('subscribe_response', 'received', result)
             self.state['streams'] = result.get('success', [])
-            self.state['next_action'] = 'Subscribed; inspect per-stream delivery counters. Raw EEG unavailable.' if 'eeg' not in self.cols else 'Subscribed; inspect actual EEG delivery counters.'
+            if requested_active and not activate:
+                self.state['next_action'] = 'EEG session activation was rejected by Cortex; see the eeg_activation event for the exact error. Aux-stream session opened instead.'
+            else:
+                self.state['next_action'] = 'Subscribed; inspect per-stream delivery counters. Raw EEG unavailable.' if 'eeg' not in self.cols else 'Subscribed; inspect actual EEG delivery counters.'
             for failure in result.get('failure', []):
                 self.event('subscribe:' + failure.get('streamName', '?'), 'error', CortexError(failure.get('code'), failure.get('message'), 'subscribe').report())
             eeg = self.cols.get('eeg', [])
             channels = [c for c in eeg if isinstance(c, str) and c not in EEG_METADATA]
             rate = (headset.get('settings') or {}).get('eegRate') or headset.get('samplingRate') or 128
-            return Source('cortex:' + headset_id, 'cortex', headset.get('customName') or headset_id, channels, ['µV'] * len(channels), float(rate), 'Cortex Unix seconds UTC', bool(headset.get('isVirtual')), {'headset': headset, 'cols': self.cols, 'session': self.session, 'nominal_rate_note': 'headset settings.eegRate or documented 128 Hz fallback; compare observed rate'})
+            # isVirtual with a real radio link is a Bluetooth-bound physical headset; only unbound virtual devices are simulated data.
+            simulated = bool(headset.get('isVirtual')) and not headset.get('connectedBy')
+            return Source('cortex:' + headset_id, 'cortex', headset.get('customName') or headset_id, channels, ['µV'] * len(channels), float(rate), 'Cortex Unix seconds UTC', simulated, {'headset': headset, 'cols': self.cols, 'session': self.session, 'nominal_rate_note': 'headset settings.eegRate or documented 128 Hz fallback; compare observed rate'})
 
     async def reconcile(self, recover=False):
         """Verify server truth; recovery reuses only the existing session, never activates."""

@@ -26,6 +26,7 @@ class FakeCortex(Cortex):
         self.token = 'fixture'
         self.connected = connected
         self.calls = []
+        self.fail_active = False
         self.state['license'] = {'scopes':['eeg']}
 
     async def call(self, method, params=None):
@@ -37,9 +38,13 @@ class FakeCortex(Cortex):
                 raise CortexError(-32022,'Device limit has been reached','queryHeadsets')
             return [{'id':'MN8-test','status':'connected','samplingRate':128}]
         if method == 'createSession':
+            if self.fail_active and (params or {}).get('status') == 'active':
+                raise CortexError(-32230, 'Headset is not supported by this license', 'createSession')
             return {'id':'session'}
         if method == 'subscribe':
-            return {'success':[{'streamName':'eeg','cols':['COUNTER','INTERPOLATED','T7','T8','MARKERS']}], 'failure':[{'streamName':'met','code':-32016,'message':'Unavailable'}]}
+            streams = (params or {}).get('streams', [])
+            cols = {'eeg': ['COUNTER','INTERPOLATED','T7','T8','MARKERS']}
+            return {'success':[{'streamName':s,'cols':cols.get(s,[s+'_col'])} for s in streams if s != 'met'], 'failure':[{'streamName':'met','code':-32016,'message':'Unavailable'}] if 'met' in streams else []}
 
 
 async def test_connection_acceptance_never_creates_session_without_confirmation():
@@ -58,16 +63,28 @@ async def test_connected_session_subscription_cols_and_partial_failure():
     assert c.calls[2][0] == 'createSession'
     assert c.calls[2][1]['status'] == 'active'
     assert c.events[-1]['operation'] == 'subscribe:met'
-    assert c.state['subscribe_response']['success'][0]['streamName']=='eeg'
+    assert 'eeg' in [s['streamName'] for s in c.state['subscribe_response']['success']]
     assert c.state['subscribe_response']['failure'][0]['code']==-32016
 
 
-async def test_no_scope_prevents_activation():
+async def test_scopeless_activation_still_attempted_and_rejection_falls_back():
     c = FakeCortex(True)
     c.state['license'] = {'scopes':[]}
-    with pytest.raises(ValueError, match='no EEG scope'):
-        await c.connect_headset('MN8-test', True)
-    assert 'createSession' not in [m for m,p in c.calls]
+    c.fail_active = True
+    source = await c.connect_headset('MN8-test', True)
+    creates = [p['status'] for m,p in c.calls if m == 'createSession']
+    assert creates == ['active','open']
+    assert any(e['operation']=='eeg_activation' and e['outcome']=='rejected' for e in c.events)
+    assert c.state['eeg_activation'] == {'requested': True, 'accepted': False, 'error': c.state['eeg_activation']['error']}
+    assert not source.channels
+
+
+async def test_scopeless_activation_accepted_streams_eeg():
+    c = FakeCortex(True)
+    c.state['license'] = {'scopes':[]}
+    source = await c.connect_headset('MN8-test', True)
+    assert c.state['eeg_activation'] == {'requested': True, 'accepted': True}
+    assert source.channels == ['T7','T8']
 
 
 async def test_rpc_correlates_out_of_order_replies_and_does_not_log_params():

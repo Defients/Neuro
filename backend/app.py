@@ -132,6 +132,12 @@ async def run_diagnostics(body: DiagnosticRequest):
         return await acquisition.cortex.diagnose(body.use_license)
 
 
+@app.post('/api/diagnostics/clear')
+def clear_diagnostics():
+    acquisition.cortex.events.clear()
+    return {'cleared': True}
+
+
 @app.get('/api/diagnostics/export')
 def diagnostic_export():
     return JSONResponse(acquisition.cortex.report(), headers={'Content-Disposition': 'attachment; filename="cortex-diagnostics.json"'})

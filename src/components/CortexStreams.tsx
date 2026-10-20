@@ -81,9 +81,7 @@ export function CortexStreams({
                             <dd>
                               {name === "met" &&
                               !String(label).endsWith(".isActive") &&
-                              state.metrics?.[
-                                String(label) as "attention" | "cognitiveStress"
-                              ] == null
+                              state.metrics?.[String(label)] == null
                                 ? "Estimate unavailable"
                                 : JSON.stringify(item.values[i])}
                             </dd>

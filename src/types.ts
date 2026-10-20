@@ -65,9 +65,10 @@ export type State = {
   quality: number | null;
   battery: number | null;
   metrics: null | {
-    attention: number | null;
-    cognitiveStress: number | null;
     stale: boolean;
+    timestamp?: number;
+    origin?: string;
+    [key: string]: number | boolean | string | null | undefined;
   };
   features: Features;
   recording: Recording;

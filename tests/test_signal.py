@@ -45,6 +45,15 @@ def test_metrics_require_active_flags_current_timestamp_and_mn8_labels():
     assert active_metrics(cols, [True, None, True, float('nan'), .9], 100, 100)['cognitiveStress'] is None
 
 
+def test_metrics_accept_insight_suite_and_flagless_lex():
+    cols = ['attention.isActive', 'attention', 'eng.isActive', 'eng', 'exc.isActive', 'exc', 'lex', 'str.isActive', 'str', 'rel.isActive', 'rel', 'int.isActive', 'int']
+    result = active_metrics(cols, [True, .8, True, .6, False, .3, .5, True, .4, True, .7, True, .2], 100, 101)
+    assert result['attention'] == .8 and result['eng'] == .6
+    assert result['str'] == .4 and result['rel'] == .7 and result['int'] == .2
+    assert result['exc'] is None
+    assert result['lex'] == .5
+
+
 def test_eeg_mapping_is_from_cols_and_preserves_metadata():
     cols = {'eeg': ['INTERPOLATED', 'T8', 'COUNTER', 'T7', 'MARKER_HARDWARE', 'MARKERS']}
     s = decode_eeg({'time':12.5,'sid':'session','eeg':[1,2.25,7,-3.125,1,[{'value':'blink'}]]}, cols)

@@ -36,11 +36,16 @@ def analyze(samples, rate, notch=0):
     return {'available': True, 'frequencies': f[keep].tolist(), 'psd': p[keep].T.tolist(), 'bands': bands, 'rms': rms.tolist(), 'peak_hz': f[keep][np.argmax(p[keep], axis=0)].tolist(), 'samples_used': len(samples), 'settings': SETTINGS}
 
 
+FLAGGED_METRICS = {'attention', 'cognitiveStress', 'str', 'eng', 'exc', 'rel', 'int'}
+
+
 def active_metrics(cols, values, stamp, now):
     mapped = dict(zip(cols, values))
     fresh = -1 <= now - stamp <= 15
     out = {'timestamp': stamp, 'stale': not fresh, 'origin': 'Cortex proprietary performance estimates'}
-    for key in ('attention', 'cognitiveStress'):
+    for key in (c for c in cols if isinstance(c, str) and not c.endswith('.isActive')):
+        flag = mapped.get(key + '.isActive')
+        active_ok = flag is True if (key in FLAGGED_METRICS or flag is not None) else True
         v = mapped.get(key)
-        out[key] = float(v) if mapped.get(key + '.isActive') is True and isinstance(v, (float, int)) and not isinstance(v, bool) and 0 <= v <= 1 and fresh else None
+        out[key] = float(v) if active_ok and isinstance(v, (float, int)) and not isinstance(v, bool) and 0 <= v <= 1 and fresh else None
     return out
